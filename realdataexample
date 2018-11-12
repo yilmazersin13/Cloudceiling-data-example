@@ -1,0 +1,349 @@
+#PLEASE INSTALL PACKAGES GIVEN BELOW
+#---------------------------------------
+#install.packages("ARCensReg")
+#install.packages("imputeYn")
+#install.packages("boot")
+#install.packages("emplik")
+#install.packages("mvtnorm")
+#install.packages("msm")
+#install.packages("psych")
+#install.packages("ggplot2")
+#install.packages("pspline")
+#install.packages("RCurl")
+#-----------------------------------------
+library(ARCensReg)
+data("CloudCeiling")
+library(imputeYn)
+library(boot)
+library(emplik)
+library(mvtnorm)
+library(msm)
+library(psych)
+library(ggplot2)
+library(pspline)
+require(RCurl)
+#---------------Multiplot function-------------------------------
+# Multiple plot function
+#
+# ggplot objects can be passed in ..., or to plotlist (as a list of ggplot objects)
+# - cols:   Number of columns in layout
+# - layout: A matrix specifying the layout. If present, 'cols' is ignored.
+#
+# If the layout is something like matrix(c(1,2,3,3), nrow=2, byrow=TRUE),
+# then plot 1 will go in the upper left, 2 will go in the upper right, and
+# 3 will go all the way across the bottom.
+#
+multiplot <- function(..., plotlist=NULL, file, cols=1, layout=NULL) {
+  library(grid)
+  
+  # Make a list from the ... arguments and plotlist
+  plots <- c(list(...), plotlist)
+  
+  numPlots = length(plots)
+  
+  # If layout is NULL, then use 'cols' to determine layout
+  if (is.null(layout)) {
+    # Make the panel
+    # ncol: Number of columns of plots
+    # nrow: Number of rows needed, calculated from # of cols
+    layout <- matrix(seq(1, cols * ceiling(numPlots/cols)),
+                     ncol = cols, nrow = ceiling(numPlots/cols))
+  }
+  
+  if (numPlots==1) {
+    print(plots[[1]])
+    
+  } else {
+    # Set up the page
+    grid.newpage()
+    pushViewport(viewport(layout = grid.layout(nrow(layout), ncol(layout))))
+    
+    # Make each plot, in the correct location
+    for (i in 1:numPlots) {
+      # Get the i,j matrix positions of the regions that contain this subplot
+      matchidx <- as.data.frame(which(layout == i, arr.ind = TRUE))
+      
+      print(plots[[i]], vp = viewport(layout.pos.row = matchidx$row,
+                                      layout.pos.col = matchidx$col))
+    }
+  }
+}
+#----------------------------------------------------------------------------------------
+kerf = function(aa) {
+  res <- ((15/16)*(1-(aa^2)))*(abs(aa)<=1)
+  return(res)
+}
+#Real data Example
+#data <- read.csv("E:/USB/CloudCeiling.txt", sep="")
+#data("CloudCeiling")
+attach(CloudCeiling)
+stable<-20
+ny<-y
+cc<-cc
+y = ny[!is.na(ny)]
+n<-length(y)
+x<-c(1:n)
+index<-c(1:n)
+WW<-matrix(0,n,n)
+WWa<-matrix(0,n,n)
+xg<-0
+spl<-30
+Yg<-0
+v0<-0
+vi<-0
+delta<-0
+autocov<-0
+Teta<-matrix(0,3,100)
+fhat<-0
+cens<-0
+T1<-0
+yy<-matrix(0,n,stable)
+
+ro<-cor(x,y)
+for (i in 1:n) {
+  if (cc[i]==1){
+    cens[i]=0
+  }
+  else {
+    cens[i]=1
+  }
+}
+
+cl<-sum(cc)/n
+sy<-sort(y)
+noc<-cl*n
+cstart<-n-noc
+cutoff<-sy[cstart]
+for (ss in 1:stable) {
+  set.seed(ss)
+sx<-sort(x)
+cut=max(y)
+meanc0<-cutoff
+varc0<-var(y)
+obs<-sy[1:cstart]
+term<-mean(obs-mean(obs))
+v0<-meanc0+var(x)*(1/var(obs))*(term)
+deltaa0<-varc0-var(obs)
+delta0<-sqrt(deltaa0)
+T1<-rtnorm(n,mean=v0,sd=delta0,lower=cut,upper=Inf)
+za<-acf(y,lag.max = 1,type = "covariance",plot=FALSE)
+Teta[,1]<-c(v0,delta0,za$acf[1])
+tol<-5
+ll=2
+
+
+while (tol>=0.01){
+  
+  for (hh in 1:n) {
+    Yg[hh]<-ifelse(y[hh]==cutoff,T1[hh],y[hh])
+  }
+  
+  sYg<-sort(Yg)
+  zz<-acf(Yg,lag.max = 1,type = "covariance",plot=FALSE)
+  obs<-sYg[1:cstart]
+  cen<-sYg[cstart:n]
+  meanc0<-mean(cen)
+  varc0<-var(cen)
+  term<-mean(obs-mean(obs))
+  vi<-meanc0+var(x)*(1/var(obs))*(term)
+  deltaa<-var(obs)-varc0
+  delta<-sqrt(deltaa)
+  autocov<-zz$acf[1]
+  Teta[,ll]<-c(vi,delta,autocov)
+  T1<-rtnorm(n,mean=vi,sd=delta,lower=cut,upper=Inf)
+  tol<-(t(Teta[,ll]-Teta[,ll-1])%*%(Teta[,ll]-Teta[,ll-1]))/(t(Teta[,ll-1])%*%(Teta[,ll-1]))
+  ll=ll+1
+}
+yy[,ss]<-Yg
+}
+
+Yg<-rowMeans(yy)
+
+a<-0
+for (i in 1:(n-1)) {
+  a[i]<-exp(-ro*(x[i+1]-x[i]))
+}
+v<-matrix(0,n,n)
+for (m1 in 2:(n-1)) {
+  for (m2 in 2:(n-1)){
+    if (m1==m2) {
+      v[m1,m2]<-1+(((a[m1-1])^2)/(1-(a[m1-1]^2)))+(((a[m1])^2)/(1-(a[m1]^2)))
+    }
+    if (m1==m2+1){
+      v[m1,m2]<- -a[m1]/(1-a[m1]^2)
+    }
+    if (m2==m1+1){
+      v[m1,m2]<- -a[m1]/(1-a[m1]^2)
+    }
+  }
+}
+v[1,1]<-1/(1-a[1]^2)
+v[n,n]<-1/(1-a[n-1]^2)
+h<-0
+#-------------------SMOOTHING SPLINE---------------------------
+for (b in 1:n-1) {
+  h[b]<-x[b+1]-x[b]
+}
+
+
+Q<-matrix(0,n,(n-2))
+for (i in 1:(n-2)) {
+  for (j in 2:n) {
+    if (i==j-1) {
+      Q[j-1,i]<-(1/h[j-1])
+    }
+    if (i==j) {
+      Q[j-1,i]<- (-(1/h[j-1])+(1/h[j]))
+    }
+    if (i==j+1) {
+      Q[j-1,i]<-(1/h[j])
+    }
+    if (abs(i-j)>=2) {
+      Q[j-1,i]<-0
+    }
+  }
+}
+R<-matrix(0,n-2,n-2)
+for (i in 2:n-1){
+  for (j in 2:n-1) {
+    if (i==j) {
+      R[j-1,i-1]<-1/3*(h[i-1]+h[i])
+    }
+    if (i==j-1) {
+      R[j-1,i-1]<-1/6*h[i]
+    }
+    if (i==j+1){
+      R[j-1,i-1]<-1/6*h[i]
+    }
+    if (abs(i-j)>=2) {
+      R[j-1,i-1]<-0
+    }
+  }
+}
+
+K<-(Q%*%solve(R)%*%t(Q))
+
+
+#Selecting Smoothing Parameter with GCV SS
+lam<-seq(0.001,0.005,length.out = spl)
+H<-0
+GCV<-0
+for (g in 1:spl) {
+  H<-solve(v+lam[g]*K)%*%v
+  GCV[g]<-(1/n)*(norm((diag(1,n)-H)%*%Yg)^2)/(1/n)*tr(diag(1,n)-H)^2
+}
+lambda<-0
+for (m in 1:spl) {
+  if (GCV[m]==min(GCV)){
+    lambda<-lam[m]
+  }
+}
+fhat<-solve(v+lambda*K)%*%v%*%Yg
+#--------------------------------------------------------------------------
+#KERNEL SMOOTHING METHOD
+#ksm<-ksmooth(x,Yg,bandwidth = 0.01)
+at<-seq(min(x),max(x),length.out=n)
+
+sx<-sort(x)
+bmin<-1.5
+bmax<-1.7
+
+#Selecting bandwidth Parameter with GCV
+bwp<-seq(bmin,bmax,length.out = spl)
+Hk<-0
+GCVk<-0
+for (g1 in 1:spl) {
+  for (j2 in 1:n){
+    uk<-((at-x[j2]))/bwp[g1]
+    KKk<-kerf(uk)
+    WWa[,j2]<-KKk/sum(KKk)
+  }
+  GCVk[g1]<-(1/n)*(norm((diag(1,n)-WWa)%*%Yg)^2)/(1/n)*tr(diag(1,n)-WWa)^2
+}
+bw<-0
+for (m1 in 1:spl) {
+  if (GCVk[m1]==min(GCVk)){
+    bw<-bwp[m1]
+  }
+}
+for (j1 in 1:n){
+  u<-((at-x[j1]))/bw
+  KK<-kerf(u)
+  WW[,j1]<-KK/sum(KK)
+}
+#ksfhat<-WW%*%Yg
+ksfhatraw<-ksmooth(x,Yg,kernel =("normal"),bandwidth=bwp)
+ksfhat<-ksfhatraw$y
+#---------------------------------------------------------------------------------
+
+psm<-smooth.Pspline(x,Yg,norder=3,spar=0.05)
+#psfhat<-ZZ%*%solve(t(ZZ)%*%v%*%ZZ+lambda2*D,tol=1e-35)%*%t(ZZ)%*%v%*%Yg
+#psfhat<-ZZ%*%solve(t(ZZ)%*%ZZ+lambda2*D,tol=1e-135)%*%t(ZZ)%*%Yg
+psfhat<-psm$ysmth
+#---------------------------------------------------------------------------------------------
+#----------MSE-----------------------
+MSE_SS<-(1/n)*(sum((fhat-Yg)^2))
+MSE_KS<-(1/n)*(sum((ksfhat-Yg)^2))
+MSE_PS<-(1/n)*(sum((psfhat-Yg)^2))
+#-----------MAPE-------------------
+y[265:267]=3.75
+y[269]=3.75
+MAPE_SS<-(1/n)*sum(abs(fhat-Yg)/abs(y))
+MAPE_KS<-(1/n)*sum(abs(ksfhat-Yg)/abs(y))
+MAPE_PS<-(1/n)*sum(abs(psfhat-Yg)/abs(y))
+#---------KL-N---------------------
+ssquare<-0
+for (s2 in 1:n){
+ssquare[s2]<-(1/s2)*sum((y[s2]-mean(y[1:s2]))^2)
+if (ssquare[s2]==0) {
+  ssquare[s2]<-1
+}
+}
+KLN_SS<-sqrt((1/n)*sum(((fhat-Yg)^2)/ssquare))
+KLN_KS<-sqrt((1/n)*sum(((ksfhat-Yg)^2)/ssquare))
+KLN_PS<-sqrt((1/n)*sum(((psfhat-Yg)^2)/ssquare))
+#-----------IQR--------------------
+iqr<-IQR(Yg)
+IQR_SS<-sqrt((1/n)*sum(abs(Yg-fhat)/iqr^2))
+IQR_KS<-sqrt((1/n)*sum(abs(Yg-ksfhat)/iqr^2))
+IQR_PS<-sqrt((1/n)*sum(abs(Yg-psfhat)/iqr^2))
+#------------RSE---------------------
+A2<-(y[2:n]-y[1:n-1])^2
+for (s3 in 1:(n-1)){
+    if (A2[s3]==0){A2[s3]<-1}
+}
+RSE_SS<-sqrt((1/n)*sum(((Yg[2:n]-fhat[2:n])^2)/(A2)))
+RSE_KS<-sqrt((1/n)*sum(((Yg[2:n]-ksfhat[2:n])^2)/(A2)))
+RSE_PS<-sqrt((1/n)*sum(((Yg[2:n]-psfhat[2:n])^2)/(A2)))
+#-----------RAE------------------------------
+
+RAE_SS<-sqrt(sum((abs((Yg[2:n]-fhat[2:n])))/(abs(A2))))
+RAE_KS<-sqrt(sum((abs(Yg[2:n]-ksfhat[2:n]))/(A2)))
+RAE_PS<-sqrt(sum((abs(Yg[2:n]-psfhat[2:n]))/(A2)))
+
+Performance<-data.frame(MAPE_SS,MAPE_KS,MAPE_PS,KLN_SS,KLN_KS,KLN_PS,IQR_SS,IQR_KS,IQR_PS,RSE_SS,RSE_KS,RSE_PS,RAE_SS,RAE_KS,RAE_PS)
+print(Performance) #Results for Table IV in the paper
+#coef<-arima(evec,order = c(1,0,0))
+#print(coef)
+#tiff('test.tiff', units="in", width=5, height=4, res=300, compression = 'lzw')
+#ggplot()+geom_point(data=df1,aes(x=index,y=y),col=ifelse(y < 4.78,'black','red'))+labs(x="Time",y="Log-transformed observations")+geom_line(data=df1,aes(x=index,y=y),lwd=0.1)+theme_minimal()
+#dev.off()
+#crx<-c(1:3)
+g1<-matrix(c(index,y),n,2)
+g2<-matrix(c(index,fhat),n,2)
+g3<-matrix(c(index,ksfhat),n,2)
+g4<-matrix(c(index,psfhat),n,2)
+g5<-matrix(c(index,Yg),n,2)
+
+df1<-data.frame(g1)
+df2<-data.frame(g2)
+df3<-data.frame(g3)
+df4<-data.frame(g4)
+df5<-data.frame(g5)
+tiff('test.tiff', units="in", width=5, height=4, res=300, compression = 'lzw')
+p1<-ggplot()+geom_point(data=df1,aes(x=index,y=y,color="Data points"))+labs(x="Time",y="Log-transformed observations")+geom_line(data=df2,aes(x=index,y=fhat,color="SS"),size=1,alpha=0.8)+ggtitle("Smoothing spline")+scale_color_manual(values = c('Data points'='black', 'SS'='blue'))+theme_light()+theme(plot.title = element_text(hjust = 0.5))
+p2<-ggplot()+geom_point(data=df1,aes(x=index,y=y,color="Data points"))+labs(x="Time",y="Log-transformed observations")+geom_line(data=df3,aes(x=index,y=ksfhat,color="KS"),size=1,alpha=0.8)+ggtitle("Kernel smoothing")+scale_color_manual(values = c('Data points'='black', 'KS'='red'))+theme_light()+theme(plot.title = element_text(hjust = 0.5))
+p3<-ggplot()+geom_point(data=df1,aes(x=index,y=y,color="Data points"))+labs(x="Time",y="Log-transformed observations")+geom_line(data=df3,aes(x=index,y=psfhat,color="PS"),size=1,alpha=0.8)+ggtitle("Penalized spline")+scale_color_manual(values = c('Data points'='black', 'PS'='green'))+theme_light()+theme(plot.title = element_text(hjust = 0.5))  
+p4<-ggplot()+geom_point(data=df5,aes(x=index,y=Yg,color="Augmented data"))+geom_point(data=df1,aes(x=index,y=y,color="Censored data"))+labs(x="Time",y="Augmented & Observed data")+ggtitle("Censored and augmented data points")+scale_color_manual(values = c('Augmented data'='red', 'Censored data'='black'))+theme_light()+theme(plot.title = element_text(hjust = 0.5))
+#p4<-ggplot()+geom_point(data=dfc1,aes(x=crx,y=cr1[,2]/30))+geom_smooth(data=dfc1,aes(x=crx,y=cr1[,2]/30))+geom_point(data=dfc2,aes(x=crx,y=cr2[,2]*1.8))+geom_smooth(data=dfc2,aes(x=crx,y=cr2[,2]*1.8))+geom_point(data=dfc3,aes(x=crx,y=cr3[,2]))+geom_smooth(data=dfc3,aes(x=crx,y=cr3[,2]))+geom_point(data=dfc4,aes(x=crx,y=cr4[,2]/50))+geom_smooth(data=dfc4,aes(x=crx,y=cr4[,2]/50))+geom_point(data=dfc5,aes(x=crx,y=cr5[,2]))+geom_smooth(data=dfc5,aes(x=crx,y=cr5[,2]))+labs(x="Methods",y="Value of criterion")
+multiplot(p1,p2,p3,p4,cols=2)
